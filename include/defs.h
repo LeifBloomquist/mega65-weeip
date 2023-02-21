@@ -35,6 +35,9 @@
 /*
  * Data types.
  */
+
+#include <stdint.h>
+ 
 #if defined(__CPIK__)
 #define uint32_t unsigned long long int
 #define uint16_t unsigned long int
