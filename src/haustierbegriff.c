@@ -1,5 +1,6 @@
 
 #include <stdio.h>
+#include <conio.h>
 #include <string.h>
 
 #include "task.h"
@@ -12,6 +13,31 @@
 #include "memory.h"
 #include "random.h"
 
+// PETSCII Control Codes
+#define CG_BLK 144
+#define CG_WHT 5
+#define CG_RED 28
+#define CG_CYN 159
+#define CG_PUR 156
+#define CG_GRN 30
+#define CG_BLU 31
+#define CG_YEL 158
+#define CG_BRN 149
+#define CG_ORG 129
+#define CG_PNK 150
+#define CG_GR1 151
+#define CG_GR2 152
+#define CG_LGN 153
+#define CG_LBL 154
+#define CG_GR3 155
+#define CG_RVS 18   // Reverse On
+#define CG_NRM 146  // Reverse Off
+#define CG_DEL 20   // Delete
+#define CG_CLR 147  // Clear Screen
+
+#define SCREEN_BASE 0x0800 //4000
+
+
 unsigned char last_frame_number=0;
 
 unsigned long byte_log=0;
@@ -19,6 +45,8 @@ unsigned long byte_log=0;
 #define PORT_NUMBER 64128
 #define HOST_NAME "rapidfire.hopto.org"
 //#define FIXED_DESTINATION_IP
+
+char tempstring[100];
 
 struct bbs {
   char *name;
@@ -57,8 +85,6 @@ const struct bbs bbs_list[27]=
    {NULL,NULL,0}
   };
 
-
-
 SOCKET *s;
 byte_t buf[1500];
 
@@ -71,7 +97,7 @@ byte_t comunica (byte_t p)
   socket_select(s);
   switch(p) {
   case WEEIP_EV_CONNECT:
-    printf("Connected.\n");
+    pcprintf("Connected.\n");
     // Send telnet GO AHEAD command
     socket_send("\0377\0371",2);
     break;
@@ -83,9 +109,9 @@ byte_t comunica (byte_t p)
       byte_log++;
       //	  if ((rx[i]>=0x20)&&(rx[i]<0x7e)
       //	      ||(rx[i]==' ')||(rx[i]=='\r')||(rx[i]=='\n'))
-      printf("%c",rx[i]);
+  //    pcprintf("%c",rx[i]);  !!!!
       //	  else
-      //	    printf("[$%02x]",rx[i]);
+      //	    pcprintf("[$%02x]",rx[i]);
     }
     lpoke(0x12000,(byte_log>>0)&0xff);
     lpoke(0x12001,(byte_log>>8)&0xff);
@@ -96,7 +122,7 @@ byte_t comunica (byte_t p)
     // FALL THROUGH
   case WEEIP_EV_DISCONNECT:
     socket_release(s);
-    printf("%c%c\nDISCONNECTED\n",5,12);
+  //  pcprintf("%c%c\nDISCONNECTED\n",5,12);
     break;
   }
   
@@ -107,38 +133,81 @@ void dump_bytes(char *msg,uint8_t *d,int count);
 
 unsigned char nbbs=0;
 
+
+
+/*
+char pprintf(char *s, ... )
+{
+    va_list vargs;
+    va_start(vargs, s);
+
+    sprintf(tempstring, s,vargs);
+    pcprintf(tempstring);
+
+    va_end(vargs);
+}
+*/
+
+
+char getanykey()
+{
+  pcprintf("{red}Press a key to continue...");
+  return cgetc();
+}
+
+
+
 void main(void)
 {
+  // Network Variables
   IPV4 a;
   EUI48 mac;
   unsigned int port_number=PORT_NUMBER;
   char *hostname=HOST_NAME; 
 
+  // Local Variables
   unsigned char i;
+  long theaddr;
   
-  POKE(0,65);
-  mega65_io_enable();
-  srand(random32(0));
-
-  POKE(0xD020,0);
-  POKE(0xD021,0);
+  //srand(random32(0)); TODO - This locks?
   
-  printf("%c%c",0x05,0x93);
+  // MEGA65 Initialization
+  POKE(0,65);  // 40 MHz
+  mega65_io_enable(); 
+ 
+  // Screen Initialization
+  conioinit();
+  setscreensize(80,25);
+  clrscr();
+  gohome();
+  bordercolor(11);
+  bgcolor(0);
+  textcolor(1);
+  pcprintf("{clr}{wht}Haustierbegriff {yel}{blon}V4{bloff} {wht}by {grn}Schema{wht}/{lblu}AIC 1234567890 1234567890 1234567890 1234567890\n");
+  
+  theaddr=getscreenaddr();
+  
+  sprintf(tempstring, "{wht}\nScreen address %ld\n", theaddr);
+  pcprintf(tempstring);
+  
+  // Keyboard Initialization
+  flushkeybuf(); 
+  while(PEEK(0xD610)) POKE(0xD610,0);   // Clear $D610 key buffer
 
-  // Clear $D610 key buffer
-  while(PEEK(0xD610)) POKE(0xD610,0);
+  // Network Initialization
   
   // Fix invalid MAC address multicast bit
   POKE(0xD6E9,PEEK(0xD6E9)&0xFE);
   // Mark MAC address as locally allocated
   POKE(0xD6E9,PEEK(0xD6E9)|0x02);
-  
+    
   // Get MAC address from ethernet controller
   for(i=0;i<6;i++) mac_local.b[i] = PEEK(0xD6E9+i);
-  printf("My MAC address is %02x:%02x:%02x:%02x:%02x:%02x\n",
+  sprintf(tempstring,"{wht}My MAC address is %02x:%02x:%02x:%02x:%02x:%02x\n",
 	 mac_local.b[0],mac_local.b[1],mac_local.b[2],
 	 mac_local.b[3],mac_local.b[4],mac_local.b[5]);
-  
+  pcprintf(tempstring); 
+
   // Setup WeeIP
   weeip_init();
   task_cancel(eth_task);
@@ -152,12 +221,17 @@ void main(void)
   lfill(0x58000,0,32768);
   
   // Do DHCP auto-configuration
-  printf("Configuring network via DHCP\n");
+  pcprintf("Configuring network via DHCP\n");
   dhcp_autoconfig();
+  
+  getanykey();
+  
   while(!dhcp_configured) {
     task_periodic();
-    POKE(0x0400+999,PEEK(0x0400+999)+1);
+    asm("inc $d020");
+    //POKE(0x0400+999,PEEK(0x0400+999)+1);
   }
+   bordercolor(11);
 
 #ifdef FIXED_DESTINATION_IP
      a.b[0]=192;
@@ -165,14 +239,17 @@ void main(void)
      a.b[2]=178;
      a.b[3]=31;
 #else  
-  printf("My IP is %d.%d.%d.%d\n",
-	 ip_local.b[0],ip_local.b[1],ip_local.b[2],ip_local.b[3]);
+  sprintf(tempstring, "My IP is %d.%d.%d.%d\n", ip_local.b[0],ip_local.b[1],ip_local.b[2],ip_local.b[3]);
+  pcprintf(tempstring);
 
-  printf("Please select a BBS:\n");
+
+
+  pcprintf("Please select a BBS:\n");
   for(nbbs=0;bbs_list[nbbs].port_number;nbbs++) {
-    printf("%c.%-17s ",'a'+nbbs,bbs_list[nbbs].name);
+  //!!!!  pcprintf("%c.%-17s ",'a'+nbbs,bbs_list[nbbs].name);
   }
-  printf("\n");
+  pcprintf("\n");
+
   
   while(1) {
     if (PEEK(0xD610)) {
@@ -186,16 +263,16 @@ void main(void)
     }
   }
   POKE(198,0);
-  printf("Preparing to connect to %s\n",bbs_list[nbbs].name);
+  //pcprintf("Preparing to connect to %s\n",bbs_list[nbbs].name);
   
    if (!dns_hostname_to_ip(hostname,&a)) {
-     printf("Could not resolve hostname '%s'\n",hostname);
+    // pcprintf("Could not resolve hostname '%s'\n",hostname);
    } else {
    }
 #endif
    
-   printf("Host '%s' resolves to %d.%d.%d.%d\n",
-	  hostname,a.b[0],a.b[1],a.b[2],a.b[3]);
+ //  pcprintf("Host '%s' resolves to %d.%d.%d.%d\n",
+//	  hostname,a.b[0],a.b[1],a.b[2],a.b[3]);
    
    s = socket_create(SOCKET_TCP);
    socket_set_callback(comunica);
@@ -216,7 +293,7 @@ void main(void)
      // Monitor hardware accelerated keyboard input for extra C65 keys only
      if (PEEK(0xD610)) {
        if (PEEK(0xD610)==0xF9) {
-	 printf("%c%c%c%c%c%cDisconnecting...",0x0d,0x05,0x12,0x11,0x11,0x11,0x11);
+	// pcprintf("%c%c%c%c%c%cDisconnecting...",0x0d,0x05,0x12,0x11,0x11,0x11,0x11);
 	 socket_reset();
        }
        POKE(0xD610,0);
