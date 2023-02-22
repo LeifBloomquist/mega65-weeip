@@ -1,7 +1,6 @@
-
 #include <stdio.h>
-#include <conio.h>
 #include <string.h>
+#include <conio.h>
 
 #include "task.h"
 #include "weeip.h"
@@ -35,7 +34,7 @@
 #define CG_DEL 20   // Delete
 #define CG_CLR 147  // Clear Screen
 
-#define SCREEN_BASE 0x0800 //4000
+#define SCREEN_BASE 0xC000
 
 
 unsigned char last_frame_number=0;
@@ -177,17 +176,15 @@ void main(void)
  
   // Screen Initialization
   conioinit();
+  setscreenaddr(SCREEN_BASE);
   setscreensize(80,25);
   clrscr();
   gohome();
   bordercolor(11);
   bgcolor(0);
   textcolor(1);
-  pcprintf("{clr}{wht}Haustierbegriff {yel}{blon}V4{bloff} {wht}by {grn}Schema{wht}/{lblu}AIC 1234567890 1234567890 1234567890 1234567890\n");
-  
-  theaddr=getscreenaddr();
-  
-  sprintf(tempstring, "{wht}\nScreen address %ld\n", theaddr);
+
+  pcprintf("{clr}{wht}Haustierbegriff {yel}{blon}V4{bloff} {wht}by {grn}Schema{wht}/{lblu}AIC\n\n");
   pcprintf(tempstring);
   
   // Keyboard Initialization
@@ -221,17 +218,14 @@ void main(void)
   lfill(0x58000,0,32768);
   
   // Do DHCP auto-configuration
-  pcprintf("Configuring network via DHCP\n");
+  pcprintf("Configuring network via DHCP...\n");
   dhcp_autoconfig();
-  
-  getanykey();
   
   while(!dhcp_configured) {
     task_periodic();
     asm("inc $d020");
-    //POKE(0x0400+999,PEEK(0x0400+999)+1);
   }
-   bordercolor(11);
+  bordercolor(11);
 
 #ifdef FIXED_DESTINATION_IP
      a.b[0]=192;
@@ -241,8 +235,6 @@ void main(void)
 #else  
   sprintf(tempstring, "My IP is %d.%d.%d.%d\n", ip_local.b[0],ip_local.b[1],ip_local.b[2],ip_local.b[3]);
   pcprintf(tempstring);
-
-
 
   pcprintf("Please select a BBS:\n");
   for(nbbs=0;bbs_list[nbbs].port_number;nbbs++) {
