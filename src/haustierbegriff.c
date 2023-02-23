@@ -41,13 +41,17 @@
 #define KEY_F7    247
 #define KEY_F9    249
 
+// Screen Modes
 enum screenmodes { SCREEN_80x25, SCREEN_80x50, SCREEN_40x25, SCREEN_LAST } screenmode;
 char screen_mode_strings[3][6] = { "80x25", "80x50", "40x25" };
 
+// Global Variables
 unsigned char last_frame_number=0;
 unsigned long byte_log=0;
 char tempstring[100];
-
+unsigned char nbbs = 0;
+SOCKET* s;
+byte_t buf[1500];
 
 struct bbs {
   char *name;
@@ -89,8 +93,7 @@ const struct bbs bbs_list[27]=
    {NULL,NULL,0}
   };
 
-SOCKET *s;
-byte_t buf[1500];
+void dump_bytes(char* msg, uint8_t* d, int count);
 
 /* Function that is used as a call-back on socket events */
 byte_t comunica (byte_t p)
@@ -100,7 +103,7 @@ byte_t comunica (byte_t p)
   socket_select(s);
   switch(p) {
   case WEEIP_EV_CONNECT:
-    pcprintf("Connected.\n");
+    pcprintf("Connected.  (F9 to Disconnect)\n");
     // Send telnet GO AHEAD command
     socket_send("\0377\0371",2);
     break;
@@ -132,23 +135,6 @@ byte_t comunica (byte_t p)
   return 0;
 }
 
-void dump_bytes(char *msg,uint8_t *d,int count);
-
-unsigned char nbbs=0;
-
-/*
-char pprintf(char *s, ... )
-{
-    va_list vargs;
-    va_start(vargs, s);
-
-    sprintf(tempstring, s,vargs);
-    pcprintf(tempstring);
-
-    va_end(vargs);
-}
-*/
-
 char getanykey()
 {
   pcprintf("{grn}Press a key to continue...");
@@ -159,7 +145,7 @@ void connect_to_host(char* hostname, unsigned int port_number)
 {
     IPV4 address;
 
-    sprintf(tempstring, "\n\nPreparing to connect to %s\n", bbs_list[nbbs].name);
+    sprintf(tempstring, "\nPreparing to connect to %s\n", bbs_list[nbbs].name);
     pcprintf(tempstring);
 
     if (!dns_hostname_to_ip(hostname, &address))
@@ -173,6 +159,7 @@ void connect_to_host(char* hostname, unsigned int port_number)
     sprintf(tempstring,"Host '%s' resolves to %d.%d.%d.%d\n", hostname, address.b[0], address.b[1], address.b[2], address.b[3]);
     pcprintf(tempstring);
 
+    pcprintf("\n{wht}Connecting...")
     s = socket_create(SOCKET_TCP);
     socket_set_callback(comunica);
     socket_set_rx_buffer(buf, 1500);
@@ -195,8 +182,7 @@ void connect_to_host(char* hostname, unsigned int port_number)
         {
             if (PEEK(0xD610) == KEY_F9 ) 
             {
-                sprintf(tempstring,"%c%c%c%c%c%cDisconnecting...",0x0d,0x05,0x12,0x11,0x11,0x11,0x11);
-                pcprintf(tempstring);
+                pcprintf("\n\n{red}Disconnecting...\n");
                 socket_reset();
             }
             POKE(0xD610, 0);
@@ -213,7 +199,6 @@ void connect_to_host(char* hostname, unsigned int port_number)
         }
     }
 }
-
 
 void show_address_book()
 {
