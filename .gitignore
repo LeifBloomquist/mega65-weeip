@@ -4,3 +4,4 @@ assets/*.h65
 content/
 sdcard-files/
 .DS_Store
+*.o

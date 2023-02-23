@@ -2,6 +2,7 @@
 #include <string.h>
 #include <conio.h>
 
+// WeeIP
 #include "task.h"
 #include "weeip.h"
 #include "eth.h"
@@ -9,30 +10,13 @@
 #include "dns.h"
 #include "dhcp.h"
 
+// Terminal support
+#include "telnet.h"
+#include "ansi.h"
+
+// MEGA65-clib
 #include "memory.h"
 #include "random.h"
-
-// PETSCII Control Codes
-#define CG_BLK 144
-#define CG_WHT 5
-#define CG_RED 28
-#define CG_CYN 159
-#define CG_PUR 156
-#define CG_GRN 30
-#define CG_BLU 31
-#define CG_YEL 158
-#define CG_BRN 149
-#define CG_ORG 129
-#define CG_PNK 150
-#define CG_GR1 151
-#define CG_GR2 152
-#define CG_LGN 153
-#define CG_LBL 154
-#define CG_GR3 155
-#define CG_RVS 18   // Reverse On
-#define CG_NRM 146  // Reverse Off
-#define CG_DEL 20   // Delete
-#define CG_CLR 147  // Clear Screen
 
 #define SCREEN_BASE 0xC000
 
@@ -40,6 +24,13 @@
 #define KEY_HELP  31
 #define KEY_F7    247
 #define KEY_F9    249
+
+// Character Modes
+#define MODE_PETSCII 0
+#define MODE_ASCII   1
+#define MODE_ANSI    2
+
+unsigned char character_mode = MODE_PETSCII;
 
 // Screen Modes
 enum screenmodes { SCREEN_80x25, SCREEN_80x50, SCREEN_40x25, SCREEN_LAST } screenmode;
@@ -52,6 +43,11 @@ char tempstring[100];
 unsigned char nbbs = 0;
 SOCKET* s;
 byte_t buf[1500];
+char disconnected = FALSE;
+
+// Telnet Flags
+unsigned char first_char = 0;
+extern int telnet_state;
 
 struct bbs {
   char *name;
@@ -70,6 +66,7 @@ const struct bbs bbs_list[27]=
    {"Scorps Portal", "scorp.us.to", 23},
    {"My C=ult BBS", "maraud.dynalias.com", 6400},
    {"Local Ubuntu", "192.168.7.51", 23},
+   {"Netcat", "192.168.7.51", 5000},
    {"The Hidden IP", "146.0.33.231", 64128},
    /*
    {"Commodore Image", "cib.dyndns.org", 6400},
@@ -95,41 +92,107 @@ const struct bbs bbs_list[27]=
 
 void dump_bytes(char* msg, uint8_t* d, int count);
 
+/* Handle a single incoming character. */
+void handle_rx(char c)
+{
+    // Special handling for first char.   If first character back from remote side is NVT_IAC, we have a telnet connection.  Force ANSI mode
+    if (first_char && (c == NVT_IAC))
+    {
+        bordercolor(COLOUR_RED);
+        SendTelnetParameters();
+        telnet_state = TELNET_STATE_OPT;
+        character_mode = MODE_ANSI;
+        first_char = 0;
+        //cursor_off();
+        pcprintf("{lgn}(Telnet){wht}\n\n");
+        //cursor_on();
+        first_char = 0;
+        return;
+    }
+
+    if (telnet_state != TELNET_STATE_INIT)
+    {
+        handle_telnet_iac(telnet_state, c);
+    }
+
+    
+    bordercolor(COLOUR_DARKGREY);
+
+    //  Finally regular data - just display
+    switch (character_mode)
+    {
+        case MODE_PETSCII:
+            pcputc(c);
+            break;
+
+        case MODE_ASCII:
+            cputc(c);
+            break;
+
+        case MODE_ANSI:
+            putchar_ansi(c);
+            break;
+
+        default:
+            pcputc(c);
+            break;
+    }
+
+    /*if ((rx[i] >= 0x20) && (rx[i] < 0x7e) || (rx[i] == ' ') || (rx[i] == '\r') || (rx[i] == '\n'))
+    {
+        //pcprintf("%c", rx[i]);  !!!!
+        cputc(rx[i]);
+        //sprintf(tempstring, "{lgn}[$%02x]", rx[i]);
+        //pcprintf(tempstring);
+    }
+    else
+    {
+        sprintf(tempstring,"{red}[$%02x]{wht}", rx[i]);
+        pcprintf(tempstring);
+    }
+    */
+}
+
 /* Function that is used as a call-back on socket events */
 byte_t comunica (byte_t p)
 {
   unsigned int i;
   unsigned char *rx=s->rx;
+
+  asm("inc $d020");
+
   socket_select(s);
-  switch(p) {
+  switch(p) 
+  {
   case WEEIP_EV_CONNECT:
-    pcprintf("Connected.  (F9 to Disconnect)\n");
+    pcprintf("{clr}Connected.  (F9 to Disconnect)\n");
+    
     // Send telnet GO AHEAD command
-    socket_send("\0377\0371",2);
+    //socket_send("\0377\0371",2);
     break;
+
   case WEEIP_EV_DATA:
   case WEEIP_EV_DISCONNECT_WITH_DATA:
     // Print what comes from the server
-    for(i=0;i<s->rx_data;i++) {
+    for(i=0;i<s->rx_data;i++) 
+    {
       lpoke(0x40000+byte_log,rx[i]);
       byte_log++;
-      //	  if ((rx[i]>=0x20)&&(rx[i]<0x7e)
-      //	      ||(rx[i]==' ')||(rx[i]=='\r')||(rx[i]=='\n'))
-  //    pcprintf("%c",rx[i]);  !!!!
-      //	  else
-      //	    pcprintf("[$%02x]",rx[i]);
+
+      handle_rx(rx[i]);
     }
     lpoke(0x12000,(byte_log>>0)&0xff);
     lpoke(0x12001,(byte_log>>8)&0xff);
     lpoke(0x12002,(byte_log>>16)&0xff);
     lpoke(0x12003,(byte_log>>24)&0xff);
+
     // Fall through if its a disconnect with data
     if (p==WEEIP_EV_DATA) break;
     // FALL THROUGH
-  case WEEIP_EV_DISCONNECT:
-    socket_release(s);
-  //  pcprintf("%c%c\nDISCONNECTED\n",5,12);
-    break;
+  case WEEIP_EV_DISCONNECT:      
+      socket_release(s);     
+      disconnected = TRUE;
+      break;
   }
   
   return 0;
@@ -144,6 +207,10 @@ char getanykey()
 void connect_to_host(char* hostname, unsigned int port_number)
 {
     IPV4 address;
+
+    character_mode = MODE_PETSCII;
+    first_char = 1;
+    telnet_state = TELNET_STATE_INIT;
 
     sprintf(tempstring, "\nPreparing to connect to %s\n", bbs_list[nbbs].name);
     pcprintf(tempstring);
@@ -160,6 +227,8 @@ void connect_to_host(char* hostname, unsigned int port_number)
     pcprintf(tempstring);
 
     pcprintf("\n{wht}Connecting...")
+    disconnected = FALSE;
+
     s = socket_create(SOCKET_TCP);
     socket_set_callback(comunica);
     socket_set_rx_buffer(buf, 1500);
@@ -168,13 +237,19 @@ void connect_to_host(char* hostname, unsigned int port_number)
     // Text to light green by default
     POKE(0x0286, 0x0d);
 
-    while (1) 
+    while (1)
     {
         // XXX Actually only call it periodically
         if (PEEK(0xD7FA) != last_frame_number) 
         {
             task_periodic();
             last_frame_number = PEEK(0xD7FA);
+        }
+
+        if (disconnected)
+        {
+            pcprintf("\n\n{red}Disconnected!\n");
+            return;
         }
 
         // Monitor hardware accelerated keyboard input for extra C65 keys only
@@ -184,6 +259,7 @@ void connect_to_host(char* hostname, unsigned int port_number)
             {
                 pcprintf("\n\n{red}Disconnecting...\n");
                 socket_reset();
+                return;
             }
             POKE(0xD610, 0);
         }
@@ -240,7 +316,7 @@ void show_menu()
             task_periodic();
             asm("inc $d020");
         }
-        bordercolor(11);
+        bordercolor(COLOUR_DARKGREY);
     }
 
     sprintf(tempstring, "\nMy IP is %d.%d.%d.%d\n", ip_local.b[0], ip_local.b[1], ip_local.b[2], ip_local.b[3]);
@@ -278,8 +354,6 @@ void change_screen_mode()
             setscreensize(80, 25);
             break;
     }
-
-    show_menu();
 }
 
 void main(void)
@@ -304,7 +378,7 @@ void main(void)
   setscreenaddr(SCREEN_BASE);
   screenmode = SCREEN_80x25;
   setscreensize(80,50);
-  bordercolor(11);
+  bordercolor(COLOUR_DARKGREY);
   bgcolor(0);
   textcolor(1);
 
@@ -334,10 +408,9 @@ void main(void)
   
   // Main Loop ---------------------------------------------------------
 
-  show_menu();
-
   while (1)
   {
+      show_menu();
       ch = cgetc();
 
       // Debug Keys
@@ -354,9 +427,9 @@ void main(void)
               break;
       }
 
-      if ((ch >= 'a') && (ch <= 'z'))
+      if ((ch >= 97) && (ch <= 122))  //a-z
       {
-          nbbs = ch - 'a';
+          nbbs = ch - 97;
           hostname = bbs_list[nbbs].host_name;
           port_number = bbs_list[nbbs].port_number;
 
