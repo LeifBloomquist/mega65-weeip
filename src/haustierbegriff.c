@@ -36,6 +36,12 @@
 
 #define SCREEN_BASE 0xC000
 
+// Keys
+#define KEY_HELP  31
+#define KEY_F7    247
+
+enum screenmodes { SCREEN_80x25, SCREEN_80x50, SCREEN_40x25, SCREEN_LAST } screenmode;
+char screen_mode_strings[3][6] = { "80x25", "80x50", "40x25" };
 
 unsigned char last_frame_number=0;
 
@@ -147,14 +153,76 @@ char pprintf(char *s, ... )
 }
 */
 
-
 char getanykey()
 {
   pcprintf("{red}Press a key to continue...");
   return cgetc();
 }
 
+void show_menu()
+{
+    int i;
 
+    clrscr();
+    gohome();
+
+    pcprintf("{clr}{wht}Haustierbegriff {yel}{blon}V4{bloff} {wht}by {grn}Schema{wht}/{lblu}AIC{wht}\n");
+
+    // Get MAC address from ethernet controller
+    for (i = 0; i < 6; i++) mac_local.b[i] = PEEK(0xD6E9 + i);
+    sprintf(tempstring, "\n{wht}My MAC address is %02x:%02x:%02x:%02x:%02x:%02x\n",
+        mac_local.b[0], mac_local.b[1], mac_local.b[2],
+        mac_local.b[3], mac_local.b[4], mac_local.b[5]);
+    pcprintf(tempstring);
+
+    if (!dhcp_configured)
+    {
+        // Do DHCP auto-configuration
+        pcprintf("Configuring network via DHCP...\n");
+        dhcp_autoconfig();
+
+        while (!dhcp_configured)
+        {
+            task_periodic();
+            asm("inc $d020");
+        }
+        bordercolor(11);
+    }
+
+    sprintf(tempstring, "\nMy IP is %d.%d.%d.%d\n", ip_local.b[0], ip_local.b[1], ip_local.b[2], ip_local.b[3]);
+    pcprintf(tempstring);
+
+    sprintf(tempstring, "\nScreen Mode %s (F7 to Switch)", screen_mode_strings[screenmode]);
+    pcprintf(tempstring);
+}
+
+void change_screen_mode()
+{
+    screenmode++;
+
+    switch (screenmode)
+    {
+        case SCREEN_80x25:
+            setscreensize(80, 25);
+            break;
+
+        case SCREEN_80x50:
+            setscreensize(80, 50);
+            break;
+
+        case SCREEN_40x25:
+            setscreensize(40, 25);
+            break;
+
+        case SCREEN_LAST:
+        default:
+            screenmode = SCREEN_80x25;
+            setscreensize(80, 25);
+            break;
+    }
+
+    show_menu();
+}
 
 void main(void)
 {
@@ -166,46 +234,43 @@ void main(void)
 
   // Local Variables
   unsigned char i;
-  long theaddr;
+  char ch;
   
   //srand(random32(0)); TODO - This locks?
   
-  // MEGA65 Initialization
+  // MEGA65 Initialization ---------------------------------------------------------
   POKE(0,65);  // 40 MHz
   mega65_io_enable(); 
  
-  // Screen Initialization
+  // Screen Initialization ---------------------------------------------------------
   conioinit();
   setscreenaddr(SCREEN_BASE);
-  setscreensize(80,25);
-  clrscr();
-  gohome();
+  screenmode = SCREEN_80x25;
+  setscreensize(80,50);
   bordercolor(11);
   bgcolor(0);
   textcolor(1);
 
-  pcprintf("{clr}{wht}Haustierbegriff {yel}{blon}V4{bloff} {wht}by {grn}Schema{wht}/{lblu}AIC\n\n");
-  pcprintf(tempstring);
-  
-  // Keyboard Initialization
+  // Keyboard Initialization ---------------------------------------------------------
   flushkeybuf(); 
   while(PEEK(0xD610)) POKE(0xD610,0);   // Clear $D610 key buffer
 
-  // Network Initialization
+  // Network Initialization ---------------------------------------------------------
   
   // Fix invalid MAC address multicast bit
   POKE(0xD6E9,PEEK(0xD6E9)&0xFE);
   // Mark MAC address as locally allocated
   POKE(0xD6E9,PEEK(0xD6E9)|0x02);
-    
-  // Get MAC address from ethernet controller
-  for(i=0;i<6;i++) mac_local.b[i] = PEEK(0xD6E9+i);
-  sprintf(tempstring,"{wht}My MAC address is %02x:%02x:%02x:%02x:%02x:%02x\n",
-	 mac_local.b[0],mac_local.b[1],mac_local.b[2],
-	 mac_local.b[3],mac_local.b[4],mac_local.b[5]);
-  pcprintf(tempstring); 
 
-  // Setup WeeIP
+#ifdef FIXED_DESTINATION_IP
+  a.b[0] = 192;
+  a.b[1] = 168;
+  a.b[2] = 178;
+  a.b[3] = 31;
+#else  
+
+  // Setup WeeIP ---------------------------------------------------------
+
   weeip_init();
   task_cancel(eth_task);
   task_add(eth_task, 0, 0,"eth");
@@ -217,45 +282,41 @@ void main(void)
   lfill(0x50000,0,32768);
   lfill(0x58000,0,32768);
   
-  // Do DHCP auto-configuration
-  pcprintf("Configuring network via DHCP...\n");
-  dhcp_autoconfig();
-  
-  while(!dhcp_configured) {
-    task_periodic();
-    asm("inc $d020");
-  }
-  bordercolor(11);
+  // Main Loop ---------------------------------------------------------
 
-#ifdef FIXED_DESTINATION_IP
-     a.b[0]=192;
-     a.b[1]=168;
-     a.b[2]=178;
-     a.b[3]=31;
-#else  
-  sprintf(tempstring, "My IP is %d.%d.%d.%d\n", ip_local.b[0],ip_local.b[1],ip_local.b[2],ip_local.b[3]);
-  pcprintf(tempstring);
+  show_menu();
 
-  pcprintf("Please select a BBS:\n");
-  for(nbbs=0;bbs_list[nbbs].port_number;nbbs++) {
-  //!!!!  pcprintf("%c.%-17s ",'a'+nbbs,bbs_list[nbbs].name);
-  }
-  pcprintf("\n");
+  while (1)
+  {
+      ch = cgetc();
+      cputdec(ch, 4, 0);
+      pcprintf("\n");
 
-  
-  while(1) {
-    if (PEEK(0xD610)) {
-      if ((PEEK(0xD610)>=0x61)&&(PEEK(0xD610)-0x61)<nbbs) {
-	nbbs=PEEK(0xD610)-0x61;
-	hostname=bbs_list[nbbs].host_name;
-	port_number=bbs_list[nbbs].port_number;
-	POKE(0xD610,0);
-	break;
-      } else POKE(0xD610,0);
-    }
+      switch (ch)
+      {
+          case KEY_F7:
+              change_screen_mode();
+              break;
+
+          default:
+              continue;
+      }
+
+
+   //   pcprintf("\nPlease select a BBS:\n");
+  //    for (nbbs = 0; bbs_list[nbbs].port_number; nbbs++) {
+  //        //!!!!  pcprintf("%c.%-17s ",'a'+nbbs,bbs_list[nbbs].name);
+  //    }
+  //    pcprintf("\n");
+
+
+      //nbbs=PEEK(0xD610)-0x61;
+      //hostname=bbs_list[nbbs].host_name;
+      //port_number=bbs_list[nbbs].port_number;
   }
-  POKE(198,0);
-  //pcprintf("Preparing to connect to %s\n",bbs_list[nbbs].name);
+
+    
+    //pcprintf("Preparing to connect to %s\n",bbs_list[nbbs].name);
   
    if (!dns_hostname_to_ip(hostname,&a)) {
     // pcprintf("Could not resolve hostname '%s'\n",hostname);
