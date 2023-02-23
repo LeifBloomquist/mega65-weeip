@@ -47,7 +47,9 @@ char disconnected = FALSE;
 
 // Telnet Flags
 unsigned char first_char = 0;
-extern int telnet_state;
+int telnet_state = TELNET_STATE_INIT;
+unsigned char telnet_verb;
+unsigned char telnet_opt;
 
 struct bbs {
   char *name;
@@ -95,28 +97,46 @@ void dump_bytes(char* msg, uint8_t* d, int count);
 /* Handle a single incoming character. */
 void handle_rx(char c)
 {
+    sprintf(tempstring, "{lgn}[$%02x]", c);
+    pcprintf(tempstring);
+    
     // Special handling for first char.   If first character back from remote side is NVT_IAC, we have a telnet connection.  Force ANSI mode
     if (first_char && (c == NVT_IAC))
-    {
-        bordercolor(COLOUR_RED);
+    {        
         SendTelnetParameters();
-        telnet_state = TELNET_STATE_OPT;
+        telnet_state = TELNET_STATE_VERB;
+        //bordercolor(COLOUR_RED);
         character_mode = MODE_ANSI;
         first_char = 0;
         //cursor_off();
-        pcprintf("{lgn}(Telnet){wht}\n\n");
+        pcprintf("{lgrn}(Telnet){wht}\n");
         //cursor_on();
-        first_char = 0;
         return;
     }
 
-    if (telnet_state != TELNET_STATE_INIT)
+    if (c == NVT_IAC) // Subsequent IACs
     {
-        handle_telnet_iac(telnet_state, c);
+        telnet_state = TELNET_STATE_VERB;
+        return;
     }
 
+    switch (telnet_state)
+    {
+        case TELNET_STATE_VERB:
+            pcprintf("{yel}(Verb){wht}\n");
+            telnet_verb = c;
+            telnet_state = TELNET_STATE_OPT;
+            return;
+
+        case TELNET_STATE_OPT:
+            pcprintf("{blu}(Opt){wht}\n");
+            telnet_opt = c;
+            //handle_telnet_iac(telnet_verb, telnet_opt);
+            telnet_state = TELNET_STATE_INIT;
+            return;
+    }
     
-    bordercolor(COLOUR_DARKGREY);
+    //bordercolor(COLOUR_DARKGREY);
 
     //  Finally regular data - just display
     switch (character_mode)
@@ -200,7 +220,7 @@ byte_t comunica (byte_t p)
 
 char getanykey()
 {
-  pcprintf("{grn}Press a key to continue...");
+  pcprintf("Press a key to continue...");
   return cgetc();
 }
 
@@ -214,6 +234,8 @@ void connect_to_host(char* hostname, unsigned int port_number)
 
     sprintf(tempstring, "\nPreparing to connect to %s\n", bbs_list[nbbs].name);
     pcprintf(tempstring);
+
+    POKE(198, 0);  // Clear keyboard buffer
 
     if (!dns_hostname_to_ip(hostname, &address))
     {
@@ -248,7 +270,8 @@ void connect_to_host(char* hostname, unsigned int port_number)
 
         if (disconnected)
         {
-            pcprintf("\n\n{red}Disconnected!\n");
+            pcprintf("\n\n{red}Disconnected!  ");
+            getanykey();
             return;
         }
 
@@ -258,8 +281,7 @@ void connect_to_host(char* hostname, unsigned int port_number)
             if (PEEK(0xD610) == KEY_F9 ) 
             {
                 pcprintf("\n\n{red}Disconnecting...\n");
-                socket_reset();
-                return;
+                socket_reset();                
             }
             POKE(0xD610, 0);
         }

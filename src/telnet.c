@@ -2,8 +2,6 @@
 #include "telnet.h"
 #include "weeip.h"
 
-int telnet_state = TELNET_STATE_INIT;
-
 void send_char(char c)
 {
 	socket_send(c, 1);
@@ -35,22 +33,12 @@ void SendTelnetParameters()
 }
 
 // Returns 1 (true) if a second IAC is returned
-unsigned char handle_telnet_iac() {
-
-	int datacount;
-	unsigned char verb;           // telnet parameters
-	unsigned char opt;
-
-	datacount = uii_socketread(socketnr, 1);   // TODO check for closed connection
-	verb = uii_data[2];                                // receive negotiation verb character
-
+unsigned char handle_telnet_iac(unsigned char verb, unsigned char opt) 
+{
 	if (verb == NVT_IAC)
 	{
 		return 1;                                  // Received two NVT_IACs in a row so treat as single 255 data in calling function
 	}
-
-	datacount = uii_socketread(socketnr, 1);   // TODO check for closed connection
-	opt = uii_data[2];                               // receive negotiation option character
 
 	switch (verb)                                  // evaluate negotiation verb character
 	{
