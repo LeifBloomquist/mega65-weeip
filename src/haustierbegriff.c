@@ -39,19 +39,15 @@
 // Keys
 #define KEY_HELP  31
 #define KEY_F7    247
+#define KEY_F9    249
 
 enum screenmodes { SCREEN_80x25, SCREEN_80x50, SCREEN_40x25, SCREEN_LAST } screenmode;
 char screen_mode_strings[3][6] = { "80x25", "80x50", "40x25" };
 
 unsigned char last_frame_number=0;
-
 unsigned long byte_log=0;
-
-#define PORT_NUMBER 64128
-#define HOST_NAME "rapidfire.hopto.org"
-//#define FIXED_DESTINATION_IP
-
 char tempstring[100];
+
 
 struct bbs {
   char *name;
@@ -69,9 +65,11 @@ const struct bbs bbs_list[27]=
    {"Eaglewing BBS", "eagelbird.ddns.net", 6400},
    {"Scorps Portal", "scorp.us.to", 23},
    {"My C=ult BBS", "maraud.dynalias.com", 6400},
+   {"Local Ubuntu", "192.168.7.51", 23},
+   {"The Hidden IP", "146.0.33.231", 64128},
+   /*
    {"Commodore Image", "cib.dyndns.org", 6400},
-   {"64 Vintag Remic", "64vintageremixbbs.dyndns.org", 6400},
-   {"Jamming Signal", "bbs.jammingsignal.com", 23},
+   {"64 Vintage Remix", "64vintageremixbbs.dyndns.org", 6400},
    {"Centronian BBS", "centronian.servebeer.com", 6400},
    {"Anrchy Undergrnd", "aubbs.dyndns.org", 2300},
    {"The Oasis BBS", "oasisbbs.hopto.org", 6400},
@@ -87,14 +85,14 @@ const struct bbs bbs_list[27]=
    {"RAVELOUTION","raveolution.hopto.org",64128},
    {"The Edge BBS","theedgebbs.dyndns.org",1541},
    {"PGS Test","F96NG92-L.fritz.box",64128},
+   */
    {NULL,NULL,0}
   };
 
 SOCKET *s;
 byte_t buf[1500];
 
-/* Function that is used as a call-back on socket events
- * */
+/* Function that is used as a call-back on socket events */
 byte_t comunica (byte_t p)
 {
   unsigned int i;
@@ -138,8 +136,6 @@ void dump_bytes(char *msg,uint8_t *d,int count);
 
 unsigned char nbbs=0;
 
-
-
 /*
 char pprintf(char *s, ... )
 {
@@ -155,8 +151,81 @@ char pprintf(char *s, ... )
 
 char getanykey()
 {
-  pcprintf("{red}Press a key to continue...");
+  pcprintf("{grn}Press a key to continue...");
   return cgetc();
+}
+
+void connect_to_host(char* hostname, unsigned int port_number)
+{
+    IPV4 address;
+
+    sprintf(tempstring, "\n\nPreparing to connect to %s\n", bbs_list[nbbs].name);
+    pcprintf(tempstring);
+
+    if (!dns_hostname_to_ip(hostname, &address))
+    {
+        sprintf(tempstring, "{red}Could not resolve hostname '%s'\n",hostname);
+        pcprintf(tempstring);
+        getanykey();
+        return;
+    }
+
+    sprintf(tempstring,"Host '%s' resolves to %d.%d.%d.%d\n", hostname, address.b[0], address.b[1], address.b[2], address.b[3]);
+    pcprintf(tempstring);
+
+    s = socket_create(SOCKET_TCP);
+    socket_set_callback(comunica);
+    socket_set_rx_buffer(buf, 1500);
+    socket_connect(&address, port_number);
+
+    // Text to light green by default
+    POKE(0x0286, 0x0d);
+
+    while (1) 
+    {
+        // XXX Actually only call it periodically
+        if (PEEK(0xD7FA) != last_frame_number) 
+        {
+            task_periodic();
+            last_frame_number = PEEK(0xD7FA);
+        }
+
+        // Monitor hardware accelerated keyboard input for extra C65 keys only
+        if (PEEK(0xD610)) 
+        {
+            if (PEEK(0xD610) == KEY_F9 ) 
+            {
+                sprintf(tempstring,"%c%c%c%c%c%cDisconnecting...",0x0d,0x05,0x12,0x11,0x11,0x11,0x11);
+                pcprintf(tempstring);
+                socket_reset();
+            }
+            POKE(0xD610, 0);
+        }
+
+        // Directly read from C64's keyboard buffer
+        if (PEEK(198)) {
+            lcopy(631, (long)buf, 10);
+            socket_select(s);
+            // Only consume keys if socket_send() succeeds
+            if (socket_send(buf, PEEK(198))) {
+                POKE(198, 0);
+            }
+        }
+    }
+}
+
+
+void show_address_book()
+{
+    pcprintf("\nAddress Book:\n");
+
+    for (nbbs = 0; bbs_list[nbbs].port_number; nbbs++)
+    {
+        sprintf(tempstring, "%c.%-17s ", 'a' + nbbs, bbs_list[nbbs].name);
+        pcprintf(tempstring);
+    }
+
+    pcprintf("\n");
 }
 
 void show_menu()
@@ -191,9 +260,13 @@ void show_menu()
 
     sprintf(tempstring, "\nMy IP is %d.%d.%d.%d\n", ip_local.b[0], ip_local.b[1], ip_local.b[2], ip_local.b[3]);
     pcprintf(tempstring);
+    //sprintf(tempstring, "Netmask  %d.%d.%d.%d\n",
+    //pcprintf(tempstring);
 
-    sprintf(tempstring, "\nScreen Mode %s (F7 to Switch)", screen_mode_strings[screenmode]);
+    sprintf(tempstring, "\nScreen Mode %s (F7 to Switch)\n", screen_mode_strings[screenmode]);
     pcprintf(tempstring);
+
+    show_address_book();
 }
 
 void change_screen_mode()
@@ -227,10 +300,9 @@ void change_screen_mode()
 void main(void)
 {
   // Network Variables
-  IPV4 a;
   EUI48 mac;
-  unsigned int port_number=PORT_NUMBER;
-  char *hostname=HOST_NAME; 
+  unsigned int port_number=23;
+  char* hostname;
 
   // Local Variables
   unsigned char i;
@@ -262,13 +334,6 @@ void main(void)
   // Mark MAC address as locally allocated
   POKE(0xD6E9,PEEK(0xD6E9)|0x02);
 
-#ifdef FIXED_DESTINATION_IP
-  a.b[0] = 192;
-  a.b[1] = 168;
-  a.b[2] = 178;
-  a.b[3] = 31;
-#else  
-
   // Setup WeeIP ---------------------------------------------------------
 
   weeip_init();
@@ -289,6 +354,8 @@ void main(void)
   while (1)
   {
       ch = cgetc();
+
+      // Debug Keys
       cputdec(ch, 4, 0);
       pcprintf("\n");
 
@@ -299,69 +366,17 @@ void main(void)
               break;
 
           default:
-              continue;
+              break;
       }
 
+      if ((ch >= 'a') && (ch <= 'z'))
+      {
+          nbbs = ch - 'a';
+          hostname = bbs_list[nbbs].host_name;
+          port_number = bbs_list[nbbs].port_number;
 
-   //   pcprintf("\nPlease select a BBS:\n");
-  //    for (nbbs = 0; bbs_list[nbbs].port_number; nbbs++) {
-  //        //!!!!  pcprintf("%c.%-17s ",'a'+nbbs,bbs_list[nbbs].name);
-  //    }
-  //    pcprintf("\n");
-
-
-      //nbbs=PEEK(0xD610)-0x61;
-      //hostname=bbs_list[nbbs].host_name;
-      //port_number=bbs_list[nbbs].port_number;
+          connect_to_host(hostname, port_number);
+          continue;
+      }
   }
-
-    
-    //pcprintf("Preparing to connect to %s\n",bbs_list[nbbs].name);
-  
-   if (!dns_hostname_to_ip(hostname,&a)) {
-    // pcprintf("Could not resolve hostname '%s'\n",hostname);
-   } else {
-   }
-#endif
-   
- //  pcprintf("Host '%s' resolves to %d.%d.%d.%d\n",
-//	  hostname,a.b[0],a.b[1],a.b[2],a.b[3]);
-   
-   s = socket_create(SOCKET_TCP);
-   socket_set_callback(comunica);
-   socket_set_rx_buffer(buf, 1500);
-   socket_connect(&a,port_number);
-
-   // Text to light green by default
-   POKE(0x0286,0x0d);
-   
-   while(1) {
-     
-     // XXX Actually only call it periodically
-     if (PEEK(0xD7FA)!=last_frame_number) {
-       task_periodic();
-       last_frame_number=PEEK(0xD7FA);
-     }
-
-     // Monitor hardware accelerated keyboard input for extra C65 keys only
-     if (PEEK(0xD610)) {
-       if (PEEK(0xD610)==0xF9) {
-	// pcprintf("%c%c%c%c%c%cDisconnecting...",0x0d,0x05,0x12,0x11,0x11,0x11,0x11);
-	 socket_reset();
-       }
-       POKE(0xD610,0);
-     }
-
-#if 1
-     // Directly read from C64's keyboard buffer
-     if (PEEK(198)) {
-       lcopy(631,(long)buf,10);
-       socket_select(s);
-       // Only consume keys if socket_send() succeeds
-       if (socket_send(buf, PEEK(198))) {
-	 POKE(198,0);
-       }
-     }
-#endif     
-   }
 }
